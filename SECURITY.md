@@ -12,6 +12,8 @@ Only the latest release on `main` receives fixes. Issues in the OwlASO backend i
 
 Report privately via a [GitHub Security Advisory](https://github.com/owlaso/owlaso-mcp/security/advisories/new) ("Report a vulnerability" on the Security tab). Do not open a public issue. Include the affected version or commit, your MCP client, the env vars in play (`OWLASO_URL` / `OWLASO_DIR`, …) and reproduction steps.
 
+Scope, out-of-scope issues, disclosure timeline and safe harbor: <https://owlaso.github.io/security/>.
+
 ## Security Model
 
 - **Read-only tools.** Every tool is a `GET` against OwlASO's local API and is annotated `readOnlyHint`. Inputs are validated with strict zod schemas (bounded lengths, regex-checked ids, country/language codes and dates) before any request is built.
