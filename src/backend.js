@@ -1,17 +1,30 @@
 import { spawn } from 'node:child_process';
-import net from 'node:net';
 import path from 'node:path';
 
 const DEFAULT_URL = 'http://127.0.0.1:3000';
+// A file: URL, not a path: `--import C:\…` is not a valid specifier on Windows.
+const PRELOAD = new URL('./preload.js', import.meta.url).href;
 
-function freePort() {
+// The child binds PORT=0 itself and reports the real port over IPC (see preload.js).
+function boundPort(child, timeoutMs) {
   return new Promise((resolve, reject) => {
-    const srv = net.createServer();
-    srv.once('error', reject);
-    srv.listen(0, '127.0.0.1', () => {
-      const { port } = srv.address();
-      srv.close(() => resolve(port));
-    });
+    const done = (fn, value) => {
+      clearTimeout(timer);
+      child.off('message', onMessage);
+      child.off('exit', onExit);
+      child.off('error', onError);
+      fn(value);
+    };
+    const onMessage = (msg) => {
+      const port = msg?.owlasoPort;
+      if (Number.isInteger(port) && port > 0 && port < 65536) done(resolve, port);
+    };
+    const onExit = (code, signal) => done(reject, new Error(`OwlASO server exited (${code ?? signal}).`));
+    const onError = (error) => done(reject, error);
+    const timer = setTimeout(() => done(reject, new Error('Timed out waiting for the OwlASO server to listen.')), timeoutMs);
+    child.on('message', onMessage);
+    child.once('exit', onExit);
+    child.once('error', onError);
   });
 }
 
@@ -47,30 +60,31 @@ export function parseBaseUrl(raw) {
 /**
  * Resolve the OwlASO HTTP API.
  *  - OWLASO_URL: use a running instance (npm start in the owlaso repo).
- *  - OWLASO_DIR: spawn `src/server.js` from an owlaso checkout on a free loopback port.
+ *  - OWLASO_DIR: spawn `src/server.js` from an owlaso checkout; it binds an ephemeral loopback port itself.
  *  - neither: http://127.0.0.1:3000.
  */
 export async function startBackend(env = process.env) {
   if (env.OWLASO_URL) return { base: parseBaseUrl(env.OWLASO_URL), stop() {} };
   if (!env.OWLASO_DIR) return { base: DEFAULT_URL, stop() {} };
 
-  const port = await freePort();
-  const child = spawn(process.execPath, [path.resolve(env.OWLASO_DIR, 'src/server.js')], {
+  const child = spawn(process.execPath, ['--import', PRELOAD, path.resolve(env.OWLASO_DIR, 'src/server.js')], {
     // HOST is pinned to loopback after the spread so the inherited env can't expose the API.
-    env: { ...env, PORT: String(port), HOST: '127.0.0.1' },
-    stdio: ['ignore', 'ignore', 'inherit'], // stdout belongs to the MCP transport
+    env: { ...env, PORT: '0', HOST: '127.0.0.1' },
+    stdio: ['ignore', 'ignore', 'inherit', 'ipc'], // stdout belongs to the MCP transport
   });
-  const spawnError = new Promise((_, reject) => child.once('error', reject));
-  spawnError.catch(() => {}); // a late 'error' must not become an unhandled rejection
-  const base = `http://127.0.0.1:${port}`;
+  child.on('error', (error) => console.error('[owlaso-mcp] OwlASO server:', error.message)); // never crash on a late spawn/kill error
+  const stop = () => { if (child.exitCode === null && child.signalCode === null) child.kill(); };
+  let base;
   try {
-    await Promise.race([waitHealthy(base, child), spawnError]);
+    const timeoutMs = 15000;
+    const deadline = Date.now() + timeoutMs;
+    base = `http://127.0.0.1:${await boundPort(child, timeoutMs)}`;
+    await waitHealthy(base, child, Math.max(1, deadline - Date.now()));
   } catch (error) {
-    child.kill();
+    stop();
     throw error;
   }
-  const stop = () => { if (child.exitCode === null && child.signalCode === null) child.kill(); };
   // Don't orphan the server if this process dies on an uncaught error.
   process.once('exit', stop);
-  return { base, stop };
+  return { base, pid: child.pid, stop };
 }

@@ -23,7 +23,7 @@ All read-only. Output is capped at `OWLASO_MAX_CHARS` (default 100000).
 | Env | Behaviour |
 |---|---|
 | `OWLASO_URL` | Use a running instance (`npm start` in owlaso) |
-| `OWLASO_DIR` | Spawn `src/server.js` from an owlaso checkout on a free loopback port |
+| `OWLASO_DIR` | Spawn `src/server.js` from an owlaso checkout. It binds an ephemeral loopback port itself (`PORT=0`) and reports it over IPC, so no other local process can grab the port first; it exits when this server does (even on SIGKILL) |
 | neither | `http://127.0.0.1:3000` |
 
 Also: `OWLASO_TIMEOUT_MS` (120000), `OWLASO_MAX_RESPONSE_BYTES` (64 MiB backend response cap). Invalid numeric values fall back to defaults. `OWLASO_URL` must be a plain `http(s)` URL (no credentials/query); redirects are refused. Env is passed through to the spawned server (`MOCK_STORE_DATA=1`, `RANK_HISTORY_DIR`, …).

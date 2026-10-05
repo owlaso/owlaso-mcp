@@ -18,9 +18,15 @@ export function createServer(client) {
 async function main() {
   const backend = await startBackend();
   const server = createServer(new OwlasoClient(backend.base));
-  const shutdown = () => { backend.stop(); process.exit(0); };
-  process.on('SIGINT', shutdown);
-  process.on('SIGTERM', shutdown);
+  let closing = false;
+  const shutdown = () => {
+    if (closing) return;
+    closing = true;
+    backend.stop();
+    process.exit(0);
+  };
+  for (const sig of ['SIGINT', 'SIGTERM', 'SIGHUP']) process.on(sig, shutdown);
+  process.stdin.on('end', shutdown);
   process.stdin.on('close', shutdown);
   await server.connect(new StdioServerTransport());
 }

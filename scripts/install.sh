@@ -10,7 +10,7 @@ sync_repo() { # owner/repo dir
 }
 sync_repo owlaso/owlaso-mcp owlaso-mcp
 sync_repo owlaso/owlaso owlaso
-(cd "$ROOT/owlaso-mcp" && npm ci)
+(cd "$ROOT/owlaso-mcp" && npm ci --ignore-scripts --omit=dev)
 (cd "$ROOT/owlaso" && npm ci --ignore-scripts)
 
 ENTRY="$ROOT/owlaso-mcp/src/index.js"
