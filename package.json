@@ -5,6 +5,7 @@
   "type": "module",
   "bin": { "owlaso-mcp": "src/index.js" },
   "main": "src/index.js",
+  "files": ["src", "scripts", "README.md"],
   "scripts": {
     "start": "node src/index.js",
     "test": "node --test test/*.test.js"

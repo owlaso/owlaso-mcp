@@ -1,31 +1,39 @@
 import { z } from 'zod';
 
+// Bounded, charset-limited inputs: everything ends up in backend query strings and store requests.
+const text = (max = 200) => z.string().trim().min(1).max(max);
+const date = z.string().regex(/^\d{4}-\d{2}-\d{2}$/u, 'Use YYYY-MM-DD');
+
 const store = z.enum(['both', 'google', 'apple']).default('both');
-const country = z.string().min(2).max(3).optional().describe('ISO country code, e.g. us');
-const lang = z.string().optional().describe('Language code, e.g. en');
-const appId = z.string().min(1).describe('Google Play package (com.spotify.music) or App Store numeric id');
+const country = z.string().regex(/^[A-Za-z]{2}$/u, 'Two-letter ISO country code').optional().describe('ISO country code, e.g. us');
+const lang = z.string().regex(/^[A-Za-z]{2,3}(?:[-_][A-Za-z0-9]{2,4})?$/u, 'Language code, e.g. en or pt-BR').optional().describe('Language code, e.g. en');
+const countryOrAll = z.string().regex(/^(?:[A-Za-z]{2}|all)$/iu, 'Two-letter ISO country code or "all"').optional();
+const langOrAll = z.string().regex(/^(?:[A-Za-z]{2,3}(?:[-_][A-Za-z0-9]{2,4})?|all)$/iu, 'Language code or "all"').optional();
+const appIdRe = /^[A-Za-z0-9._]{1,255}$/u;
+const appId = z.string().regex(appIdRe, 'Package name or numeric App Store id').describe('Google Play package (com.spotify.music) or App Store numeric id');
 const appPlatform = z.enum(['google', 'apple']).optional().describe('Store appId belongs to (inferred from format if omitted)');
-const appId2 = z.string().optional().describe('Pin the listing on the other store');
+const appId2 = z.string().regex(appIdRe, 'Package name or numeric App Store id').optional().describe('Pin the listing on the other store');
+const keyword = z.string().trim().min(2).max(100);
 
 const reviewFilters = {
   appId, appPlatform, appId2,
-  title: z.string().optional().describe('App title, used to find the counterpart listing'),
-  developer: z.string().optional(),
+  title: text().optional().describe('App title, used to find the counterpart listing'),
+  developer: text().optional(),
   platform: z.enum(['google', 'apple', 'both']).optional(),
-  country: z.string().optional().describe('ISO country, or "all" for every storefront'),
-  lang: z.string().optional().describe('Language code, or "all" for multi-language'),
+  country: countryOrAll.describe('ISO country, or "all" for every storefront'),
+  lang: langOrAll.describe('Language code, or "all" for multi-language'),
   max: z.number().int().positive().max(5000).optional(),
-  sort: z.string().optional().describe('newest | rating | helpful …'),
-  stars: z.string().optional().describe('e.g. "1,2"'),
+  sort: z.string().regex(/^[a-z_]{1,32}$/iu).optional().describe('newest | rating | helpful …'),
+  stars: z.string().regex(/^[1-5](?:\s*,\s*[1-5]){0,4}$/u, 'Comma-separated 1-5, e.g. "1,2"').optional().describe('e.g. "1,2"'),
   minRating: z.number().min(1).max(5).optional(),
   maxRating: z.number().min(1).max(5).optional(),
-  keyword: z.string().optional(),
-  allKeywords: z.string().optional().describe('All words must match'),
-  anyKeyword: z.string().optional().describe('Any word matches'),
-  dateFrom: z.string().optional().describe('YYYY-MM-DD'),
-  dateTo: z.string().optional().describe('YYYY-MM-DD'),
-  version: z.string().optional(),
-  minLength: z.number().int().nonnegative().optional(),
+  keyword: text().optional(),
+  allKeywords: text().optional().describe('All words must match'),
+  anyKeyword: text().optional().describe('Any word matches'),
+  dateFrom: date.optional().describe('YYYY-MM-DD'),
+  dateTo: date.optional().describe('YYYY-MM-DD'),
+  version: text(50).optional(),
+  minLength: z.number().int().nonnegative().max(100_000).optional(),
   replyOnly: z.boolean().optional().describe('Only reviews with a developer reply'),
 };
 
@@ -36,9 +44,11 @@ const flag = (v) => (v ? '1' : undefined);
 
 // Keeps per-group stats but caps the review rows so full data fits a model context.
 export function capFullReviews(data, perGroup) {
+  if (!data || typeof data !== 'object' || !Array.isArray(data.groups)) return data;
   let omitted = 0;
-  const groups = (data.groups || []).map((g) => {
-    const reviews = g.reviews || [];
+  const groups = data.groups.map((g) => {
+    if (!g || !Array.isArray(g.reviews)) return g;
+    const reviews = g.reviews;
     omitted += Math.max(0, reviews.length - perGroup);
     return { ...g, reviews: reviews.slice(0, perGroup) };
   });
@@ -56,20 +66,20 @@ export const TOOLS = [
   {
     name: 'search_apps',
     description: 'Search apps by name, package name or App Store id on Google Play and/or the App Store.',
-    schema: { q: z.string().min(1), platform: z.enum(['all', 'google', 'apple']).default('all'), country, lang, limit: z.number().int().positive().max(50).optional() },
+    schema: { q: text(), platform: z.enum(['all', 'google', 'apple']).default('all'), country, lang, limit: z.number().int().positive().max(50).optional() },
     route: '/api/search',
   },
   {
     name: 'analyze_keyword',
     description: 'ASO keyword analysis for one country: popularity, difficulty, opportunity, ranking apps, similar keywords, competitor keywords. Set lite to skip competitor probes and history. track keeps a history snapshot on lite runs.',
-    schema: { keyword: z.string().min(2), store, country, lang, limit: z.number().int().positive().max(50).optional(), lite: z.boolean().optional(), track: z.boolean().optional() },
+    schema: { keyword, store, country, lang, limit: z.number().int().positive().max(50).optional(), lite: z.boolean().optional(), track: z.boolean().optional() },
     route: '/api/asosearch',
     map: ({ keyword, lite, track, ...rest }) => ({ q: keyword, lite: flag(lite), track: flag(track), ...rest }),
   },
   {
     name: 'keyword_history',
     description: 'Daily rank/score snapshots (up to 180 days) for a keyword × store × country × language.',
-    schema: { keyword: z.string().min(2), store, country, lang },
+    schema: { keyword, store, country, lang },
     route: '/api/asosearch/history',
     map: ({ keyword, ...rest }) => ({ q: keyword, ...rest }),
   },
